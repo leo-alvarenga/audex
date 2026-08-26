@@ -19,6 +19,8 @@ Converts FLAC files to AAC `.m4a` so they fit on my DAP. That's basically it.
 ```bash
 npm install
 npm run build
+
+alias audex="node $(pwd)/dist/cli.js" # or whatever way you want to run it
 ```
 
 ## Usage
