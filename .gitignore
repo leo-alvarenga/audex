@@ -1,0 +1,5 @@
+node_modules/
+dist/
+Music/
+*.part
+/tmp-audex-test/
