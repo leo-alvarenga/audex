@@ -11,6 +11,8 @@ That's basically it.
   FLAC instead of losing it.
 - `audex tag`: tags audio files (`.flac`, `.m4a`, `.mp3`) using existing
   metadata, with an optional review step.
+- `audex sync`: mirrors a directory into another (same structure and files),
+  copying only what's missing or different, with `--dry-run` and `--force`.
 
 ## Requirements
 
@@ -31,7 +33,7 @@ alias audex="node $(pwd)/dist/cli.js" # or whatever way you want to run it
 ### convert
 
 ```bash
-audex convert <input-dir> <output-dir> [--dry-run] [--auto-tag]
+audex convert <input-dir> <output-dir> [--dry-run] [--auto-tag] [--include-lyrics]
 ```
 
 The output dir must already exist.
@@ -47,10 +49,13 @@ audex convert ~/music/flac ~/music/dap --dry-run
 `--auto-tag` tries to fetch missing metadata from MusicBrainz/AcoustID. It's
 flaky; treat it as a bonus, not a guarantee.
 
+`--include-lyrics` fetches timestamped lyrics from LRCLIB and writes a
+`.lrc` file next to each output file (name matches the audio file). Tracks
+without available lyrics are skipped and counted in a warning at the end.
 ### tag
 
 ```bash
-audex tag <input-dir> [output-dir] [--plan] [--overwrite]
+audex tag <input-dir> [output-dir] [--plan] [--overwrite] [--include-lyrics]
 ```
 
 Without an output dir, files are edited in place (you'll be asked to confirm).
@@ -74,6 +79,20 @@ audex tag ~/music/flac --plan
 # Apply the (edited) plan to copies
 audex tag ~/music/flac ~/music/dap --overwrite
 ```
+
+`--include-lyrics` (same as convert) also writes `.lrc` files next to each
+tagged file.
+
+### sync
+
+```bash
+audex sync <origin> <dest> [--dry-run] [--force]
+```
+
+Mirrors `<origin>` into `<dest>`: creates missing directories, copies missing
+or changed files (compared by size, then SHA-256). `--force` also deletes files
+and directories in `<dest>` that are not in `<origin>`. `--dry-run` prints what
+would change without writing anything.
 
 ## Heads up
 

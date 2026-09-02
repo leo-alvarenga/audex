@@ -1,5 +1,4 @@
 import { Command } from "commander";
-import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { resolve } from "node:path";
@@ -11,20 +10,7 @@ import {
   generatePlan,
   hasPlan,
 } from "../tagger.js";
-
-async function ensureDir(path: string, label: string): Promise<void> {
-  const info = await stat(path).catch(() => null);
-
-  if (!info) {
-    console.error(`error: ${label} directory does not exist: ${path}`);
-    process.exit(1);
-  }
-
-  if (!info.isDirectory()) {
-    console.error(`error: ${label} path is not a directory: ${path}`);
-    process.exit(1);
-  }
-}
+import { assertDir } from "../fs.js";
 
 async function confirm(question: string): Promise<boolean> {
   const rl = createInterface({ input: stdin, output: stdout });
@@ -49,17 +35,21 @@ export function tagCommand(): Command {
       "--overwrite",
       "overwrite existing tags (default: merge, existing tags take precedence)",
     )
+    .option(
+      "--include-lyrics",
+      "write timestamped .lrc files next to each tagged file",
+    )
     .action(
       async (
         input: string,
         output: string | undefined,
-        opts: { plan: boolean; overwrite: boolean },
+        opts: { plan: boolean; overwrite: boolean; includeLyrics: boolean },
       ) => {
         const inputDir = resolve(input);
         const outDir = output ? resolve(output) : null;
 
-        await ensureDir(inputDir, "input");
-        if (outDir) await ensureDir(outDir, "output");
+        await assertDir(inputDir, "input");
+        if (outDir) await assertDir(outDir, "output");
 
         if (opts.plan) {
           await generatePlan(inputDir, { overwrite: opts.overwrite });
@@ -85,9 +75,15 @@ export function tagCommand(): Command {
         }
 
         if (await hasPlan(inputDir)) {
-          await applyPlan(inputDir, outDir, { overwrite: opts.overwrite });
+          await applyPlan(inputDir, outDir, {
+            overwrite: opts.overwrite,
+            includeLyrics: opts.includeLyrics,
+          });
         } else {
-          await defaultAction(inputDir, outDir, { overwrite: opts.overwrite });
+          await defaultAction(inputDir, outDir, {
+            overwrite: opts.overwrite,
+            includeLyrics: opts.includeLyrics,
+          });
         }
       },
     );

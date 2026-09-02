@@ -1,3 +1,10 @@
+export type Tree = { files: Map<string, string>; dirs: Set<string> };
+
+export type SyncAction =
+  | { kind: "mkdir"; rel: string }
+  | { kind: "copy"; rel: string }
+  | { kind: "delete"; rel: string };
+
 export interface FpcalcResult {
   duration: number;
   fingerprint: string;

@@ -1,11 +1,11 @@
-import { cpus, tmpdir } from "node:os";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { dirname, extname, join, relative } from "node:path";
-import ffmpeg from "fluent-ffmpeg";
-import pLimit from "p-limit";
-import cliProgress from "cli-progress";
+import { tmpdir } from "node:os";
+import { readFile, unlink, writeFile } from "node:fs/promises";
+import { extname, join, relative } from "node:path";
 import { scanFiles } from "./scan.js";
-import { extractLocalTags, metaTags, resolveTagMetadata } from "./metadata.js";
+import { extractLocalTags, resolveTagMetadata } from "./metadata.js";
+import { writeAudio } from "./ffmpeg.js";
+import { writeLyrics } from "./lyrics.js";
+import { runWithProgress } from "./progress.js";
 import type { TagPlan, TrackMeta } from "./types.js";
 
 export const PLAN_FILENAME = "audex-plan.json";
@@ -33,10 +33,11 @@ export async function hasPlan(inputDir: string): Promise<boolean> {
 function present(v: unknown): boolean {
   if (typeof v === "string") return v.length > 0;
   if (typeof v === "number") return v > 0;
+
   return false;
 }
 
-// existing tags win; planned values only fill gaps.
+// existing tags win; planned values only fill gaps
 function mergeMeta(
   existing: Partial<TrackMeta>,
   planned: Partial<TrackMeta>,
@@ -58,6 +59,7 @@ function mergeMeta(
 function formatFor(path: string): string {
   const fmt = FORMAT_BY_EXT[extname(path).toLowerCase()];
   if (!fmt) throw new Error(`unsupported audio format: ${extname(path)}`);
+
   return fmt;
 }
 
@@ -71,15 +73,20 @@ async function resolveCover(
       await readFile(cover);
       return { path: cover, temp: false };
     }
+
     const res = await fetch(cover);
     if (!res.ok) return null;
+
     const ct = res.headers.get("content-type") ?? "";
     const ext = ct.includes("png") ? ".png" : ".jpg";
+
     const path = join(
       tmpdir(),
       `audex-cover-${process.pid}-${Math.random().toString(36).slice(2)}${ext}`,
     );
+
     await writeFile(path, Buffer.from(await res.arrayBuffer()));
+
     return { path, temp: true };
   } catch {
     return null;
@@ -92,45 +99,24 @@ export async function writeTags(
   meta: Partial<TrackMeta>,
   opts: { overwrite: boolean },
 ): Promise<void> {
-  const tmp = `${dest}.part`;
-  await mkdir(dirname(dest), { recursive: true });
   const cover = await resolveCover(meta.coverUrl);
-
   try {
-    await new Promise<void>((resolve, reject) => {
-      const cmd = ffmpeg(src);
-      if (cover) cmd.input(cover.path);
-
-      cmd
-        .outputOptions("-c", "copy")
-        .outputOptions("-map_metadata", "0")
-        .format(formatFor(dest));
-
-      if (cover) {
-        cmd
-          .outputOptions("-map", "0:a")
-          .outputOptions("-map", "1")
-          .outputOptions("-disposition:v", "attached_pic");
-      }
-
-      // overwrite: write every known tag (empty clears it); merge: only non-empty.
-      for (const [k, v] of metaTags(meta)) {
-        if (opts.overwrite || v) cmd.outputOptions("-metadata", `${k}=${v}`);
-      }
-
-      cmd
-        .on("end", () => resolve())
-        .on("error", (err, _stdout, stderr) => {
-          const detail = (stderr ?? "").trim().split("\n").slice(-6).join("\n");
-          reject(new Error(`${err.message}${detail ? `\n${detail}` : ""}`));
-        })
-        .save(tmp);
-    });
-
-    await rename(tmp, dest);
-  } catch (err) {
-    await unlink(tmp).catch(() => {});
-    throw err;
+    await writeAudio(
+      src,
+      dest,
+      meta,
+      (cmd) => {
+        cmd.outputOptions("-c", "copy").format(formatFor(dest));
+        if (cover) {
+          cmd
+            .input(cover.path)
+            .outputOptions("-map", "0:a")
+            .outputOptions("-map", "1")
+            .outputOptions("-disposition:v", "attached_pic");
+        }
+      },
+      { overwrite: opts.overwrite },
+    );
   } finally {
     if (cover?.temp) await unlink(cover.path).catch(() => {});
   }
@@ -150,23 +136,15 @@ export async function generatePlan(
   const files = await scanFiles(inputDir, AUDIO_EXTS);
   const plan: TagPlan = { version: 1, files: {} };
 
-  const limit = pLimit(cpus().length);
-  const bar = new cliProgress.SingleBar(
-    { format: "planning [{bar}] {percentage}% | {value}/{total} | {file}" },
-    cliProgress.Presets.shades_classic,
+  await runWithProgress(
+    "planning",
+    files,
+    (file) => relative(inputDir, file),
+    async (file) => {
+      const rel = relative(inputDir, file);
+      plan.files[rel] = await resolveTagMetadata(file, opts);
+    },
   );
-  bar.start(files.length, 0);
-
-  await Promise.all(
-    files.map((file) =>
-      limit(async () => {
-        const rel = relative(inputDir, file);
-        plan.files[rel] = await resolveTagMetadata(file, opts);
-        bar.increment(1, { file: rel });
-      }),
-    ),
-  );
-  bar.stop();
 
   await writeFile(path, JSON.stringify(plan, null, 2) + "\n");
   console.log(`Wrote plan for ${files.length} file(s): ${path}`);
@@ -176,39 +154,46 @@ async function processFiles(
   inputDir: string,
   outDir: string | null,
   resolvePlanned: (file: string) => Promise<Partial<TrackMeta> | null>,
-  overwrite: boolean,
+  opts: { overwrite: boolean; includeLyrics: boolean },
 ): Promise<void> {
   const files = await scanFiles(inputDir, AUDIO_EXTS);
+
   if (files.length === 0) {
     console.log(`No audio files found in ${inputDir}`);
     return;
   }
 
-  const limit = pLimit(cpus().length);
-  const bar = new cliProgress.SingleBar(
-    { format: "tagging [{bar}] {percentage}% | {value}/{total} | {file}" },
-    cliProgress.Presets.shades_classic,
-  );
-  bar.start(files.length, 0);
-
   let tagged = 0;
-  await Promise.all(
-    files.map((file) =>
-      limit(async () => {
-        const rel = relative(inputDir, file);
-        const planned = await resolvePlanned(file);
-        bar.increment(1, { file: rel });
-        if (planned === null) return;
+  let missingLyrics = 0;
 
-        const existing = await extractLocalTags(file);
-        const final = overwrite ? planned : mergeMeta(existing, planned);
-        const dest = outDir ? join(outDir, rel) : file;
-        await writeTags(file, dest, final, { overwrite });
-        tagged++;
-      }),
-    ),
+  await runWithProgress(
+    "tagging",
+    files,
+    (file) => relative(inputDir, file),
+    async (file) => {
+      const rel = relative(inputDir, file);
+      const planned = await resolvePlanned(file);
+
+      if (planned === null) return;
+
+      const existing = await extractLocalTags(file);
+      const final = opts.overwrite ? planned : mergeMeta(existing, planned);
+      const dest = outDir ? join(outDir, rel) : file;
+
+      await writeTags(file, dest, final, { overwrite: opts.overwrite });
+      tagged++;
+
+      if (opts.includeLyrics && !(await writeLyrics(dest, file, final))) {
+        missingLyrics++;
+      }
+    },
   );
-  bar.stop();
+
+  if (opts.includeLyrics && missingLyrics > 0) {
+    console.warn(
+      `Warning: could not obtain lyrics for ${missingLyrics} of ${files.length} track(s).`,
+    );
+  }
 
   console.log(
     `Done: ${tagged} file(s) tagged${outDir ? ` into ${outDir}` : " in place"}.`,
@@ -218,28 +203,29 @@ async function processFiles(
 export async function applyPlan(
   inputDir: string,
   outDir: string | null,
-  opts: { overwrite: boolean },
+  opts: { overwrite: boolean; includeLyrics: boolean },
 ): Promise<void> {
   const plan = JSON.parse(
     await readFile(planPath(inputDir), "utf8"),
   ) as TagPlan;
+
   await processFiles(
     inputDir,
     outDir,
     (file) => Promise.resolve(plan.files[relative(inputDir, file)] ?? null),
-    opts.overwrite,
+    opts,
   );
 }
 
 export async function defaultAction(
   inputDir: string,
   outDir: string | null,
-  opts: { overwrite: boolean },
+  opts: { overwrite: boolean; includeLyrics: boolean },
 ): Promise<void> {
   await processFiles(
     inputDir,
     outDir,
     (file) => resolveTagMetadata(file, opts),
-    opts.overwrite,
+    opts,
   );
 }

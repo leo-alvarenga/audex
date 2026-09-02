@@ -1,11 +1,11 @@
-import { cpus } from "node:os";
 import { copyFile, mkdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { scanFiles } from "./scan.js";
-import pLimit from "p-limit";
-import cliProgress from "cli-progress";
 import { transcode } from "./transcode.js";
 import { resolveMetadata } from "./metadata.js";
+import { writeLyrics } from "./lyrics.js";
+import { runWithProgress } from "./progress.js";
+import type { TrackMeta } from "./types.js";
 
 export function destPath(
   inputDir: string,
@@ -18,7 +18,7 @@ export function destPath(
 export async function convert(
   inputDir: string,
   outDir: string,
-  opts: { autoTag: boolean; dryRun: boolean },
+  opts: { autoTag: boolean; dryRun: boolean; includeLyrics: boolean },
 ): Promise<void> {
   const files = await scanFiles(inputDir, [".flac"]);
 
@@ -38,50 +38,53 @@ export async function convert(
     return;
   }
 
-  const limit = pLimit(cpus().length);
-
-  const bar = new cliProgress.SingleBar(
-    { format: "converting [{bar}] {percentage}% | {value}/{total} | {file}" },
-    cliProgress.Presets.shades_classic,
-  );
-
-  bar.start(files.length, 0);
-
-  let copied = 0;
   let converted = 0;
+  let copied = 0;
+  let missingLyrics = 0;
 
-  await Promise.all(
-    files.map((file) =>
-      limit(async () => {
-        const rel = relative(inputDir, file);
+  await runWithProgress(
+    "converting",
+    files,
+    (file) => relative(inputDir, file),
+    async (file) => {
+      const rel = relative(inputDir, file);
+      let meta: TrackMeta | undefined;
 
-        try {
-          const meta = opts.autoTag
-            ? await resolveMetadata(file, { autoTag: true })
-            : undefined;
+      try {
+        meta = opts.autoTag
+          ? await resolveMetadata(file, { autoTag: true })
+          : undefined;
 
-          await transcode(file, destPath(inputDir, outDir, file), meta);
+        const dest = destPath(inputDir, outDir, file);
+        await transcode(file, dest, meta);
+        converted++;
 
-          converted++;
-          bar.increment(1, { file: rel });
-        } catch (err) {
-          const copyDest = join(outDir, rel);
-
-          await mkdir(dirname(copyDest), { recursive: true });
-          await copyFile(file, copyDest);
-
-          copied++;
-          bar.increment(1, { file: `copied ${rel}` });
-
-          console.warn(
-            `\n[copy] ${rel}: conversion failed (${(err as Error).message}); copied original`,
-          );
+        if (opts.includeLyrics && !(await writeLyrics(dest, file, meta))) {
+          missingLyrics++;
         }
-      }),
-    ),
+      } catch (err) {
+        const copyDest = join(outDir, rel);
+
+        await mkdir(dirname(copyDest), { recursive: true });
+        await copyFile(file, copyDest);
+        copied++;
+
+        if (opts.includeLyrics && !(await writeLyrics(copyDest, file, meta))) {
+          missingLyrics++;
+        }
+
+        console.warn(
+          `\n[copy] ${rel}: conversion failed (${(err as Error).message}); copied original`,
+        );
+      }
+    },
   );
 
-  bar.stop();
+  if (opts.includeLyrics && missingLyrics > 0) {
+    console.warn(
+      `Warning: could not obtain lyrics for ${missingLyrics} of ${files.length} track(s).`,
+    );
+  }
 
   console.log(
     `\nDone: ${converted} converted, ${copied} copied (conversion failed).`,

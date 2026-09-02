@@ -26,7 +26,7 @@ export async function extractLocalTags(
 /**
  * Metadata fallback chain for tagging the output: local tags -> AcoustID /
  * MusicBrainz (only when --auto-tag and tags are missing). Unresolved fields
- * stay empty; ffmpeg's -map_metadata 0 copies the rest of the source tags.
+ * stay empty; ffmpeg's -map_metadata 0 copies the rest of the source tags
  */
 export async function resolveMetadata(
   file: string,
@@ -64,6 +64,7 @@ function defined(v: unknown): boolean {
   if (v == null) return false;
   if (typeof v === "string") return v.length > 0;
   if (typeof v === "number") return v > 0;
+
   return true;
 }
 
@@ -73,7 +74,7 @@ function pick<T>(a: T | undefined, b: T | undefined): T | undefined {
 
 /**
  * Full resolution for the tag command: always queries remote (so plan/apply
- * are complete), preferring remote when overwriting and local otherwise.
+ * are complete), preferring remote when overwriting and local otherwise
  */
 export async function resolveTagMetadata(
   file: string,
@@ -101,9 +102,7 @@ export async function resolveTagMetadata(
  * Map metadata (partial ok) to flat ffmpeg `-metadata` tag pairs. Empty or
  * unknown values become empty strings so callers decide whether to write or clear.
  */
-export function metaTags(
-  meta: Partial<TrackMeta>,
-): Array<[string, string]> {
+export function metaTags(meta: Partial<TrackMeta>): Array<[string, string]> {
   return [
     ["title", meta.title ?? ""],
     ["artist", meta.artist ?? ""],

@@ -1,7 +1,7 @@
 import { Command } from "commander";
-import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { convert } from "../convert.js";
+import { assertDir } from "../fs.js";
 
 export function convertCommand(): Command {
   return new Command()
@@ -16,6 +16,10 @@ export function convertCommand(): Command {
       "fetch missing metadata from MusicBrainz and AcoustID",
     )
     .option(
+      "--include-lyrics",
+      "write timestamped .lrc files next to each converted file",
+    )
+    .option(
       "--dry-run",
       "list files that would be converted without writing anything",
     )
@@ -23,26 +27,17 @@ export function convertCommand(): Command {
       async (
         input: string,
         output: string,
-        opts: { autoTag: boolean; dryRun: boolean },
+        opts: { autoTag: boolean; dryRun: boolean; includeLyrics: boolean },
       ) => {
         const inputDir = resolve(input);
         const outDir = resolve(output);
 
-        const info = await stat(outDir).catch(() => null);
-
-        if (!info) {
-          console.error(`error: output directory does not exist: ${outDir}`);
-          process.exit(1);
-        }
-
-        if (!info.isDirectory()) {
-          console.error(`error: output path is not a directory: ${outDir}`);
-          process.exit(1);
-        }
+        await assertDir(outDir, "output");
 
         await convert(inputDir, outDir, {
           autoTag: opts.autoTag,
           dryRun: opts.dryRun,
+          includeLyrics: opts.includeLyrics,
         });
       },
     );
