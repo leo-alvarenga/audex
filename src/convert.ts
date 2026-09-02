@@ -1,6 +1,7 @@
 import { cpus } from "node:os";
-import { copyFile, mkdir, readdir } from "node:fs/promises";
-import { dirname, extname, join, relative } from "node:path";
+import { copyFile, mkdir } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
+import { scanFiles } from "./scan.js";
 import pLimit from "p-limit";
 import cliProgress from "cli-progress";
 import { transcode } from "./transcode.js";
@@ -14,41 +15,12 @@ export function destPath(
   return join(outDir, relative(inputDir, file).replace(/\.flac$/i, ".m4a"));
 }
 
-async function scanFlacFiles(dir: string): Promise<string[]> {
-  const stack = [dir];
-  const out: string[] = [];
-
-  while (stack.length) {
-    const current = stack.pop()!;
-    const entries = await readdir(current, { withFileTypes: true }).catch(
-      () => null,
-    );
-
-    if (!entries) continue;
-
-    for (const e of entries) {
-      const full = join(current, e.name);
-
-      if (e.isDirectory()) {
-        stack.push(full);
-        continue;
-      }
-
-      if (e.isFile() && extname(e.name).toLowerCase() === ".flac") {
-        out.push(full);
-      }
-    }
-  }
-
-  return out.sort();
-}
-
 export async function convert(
   inputDir: string,
   outDir: string,
   opts: { autoTag: boolean; dryRun: boolean },
 ): Promise<void> {
-  const files = await scanFlacFiles(inputDir);
+  const files = await scanFiles(inputDir, [".flac"]);
 
   if (files.length === 0) {
     console.log(`No FLAC files found in ${inputDir}`);

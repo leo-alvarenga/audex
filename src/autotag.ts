@@ -1,10 +1,9 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { FpcalcResult, TrackMeta } from "./types.js";
+import { MB_UA } from "./constants.js";
 
 const execFileP = promisify(execFile);
-
-const MB_UA = "audex/0.1.0 (https://github.com/leo-alvarenga/audex)";
 
 async function runFpcalc(file: string): Promise<FpcalcResult | null> {
   try {
@@ -28,10 +27,52 @@ async function getJson(
   return res.json();
 }
 
+// MusicBrainz requires ~1 req/s; serialize MB calls to avoid 503s.
+let lastMbAt = 0;
+async function mbGetJson(url: string): Promise<any> {
+  const wait = lastMbAt + 1000 - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+  lastMbAt = Date.now();
+  return getJson(url, { "User-Agent": MB_UA });
+}
+
+function artistCredit(credit?: Array<{ name?: string }>): string | undefined {
+  const name = credit?.map((ac) => ac.name ?? "").join("");
+  return name || undefined;
+}
+
+function parseYear(date?: string): number | undefined {
+  const y = date?.slice(0, 4);
+  return y && /^\d{4}$/.test(y) ? Number(y) : undefined;
+}
+
+function findTrack(
+  recordingTitle: string | undefined,
+  release: any,
+): number | undefined {
+  const target = recordingTitle?.toLowerCase();
+  if (!target) return undefined;
+  for (const medium of release?.media ?? []) {
+    for (const track of medium?.tracks ?? []) {
+      if (track?.title?.toLowerCase() === target) {
+        return typeof track.position === "number" ? track.position : undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+function coverUrl(releaseId?: string): string | undefined {
+  return releaseId
+    ? `https://coverartarchive.org/release/${releaseId}/front`
+    : undefined;
+}
+
 /**
- * Fingerprint the file with fpcalc, match against AcoustID, then pull the
- * recording's title/artist/album from MusicBrainz; Returns null (silently) on
- * any failure so the caller can fall back to local tags
+ * Fingerprint the file with fpcalc, match against AcoustID, then pull rich
+ * metadata (title/artist/album/albumArtist/track/year/genre/cover) from
+ * MusicBrainz. Returns null (silently) on any failure so callers fall back to
+ * local tags.
  */
 export async function lookupByFingerprint(
   file: string,
@@ -53,25 +94,35 @@ export async function lookupByFingerprint(
     const acoustid = await getJson(
       `https://api.acoustid.org/v2/lookup?${params}`,
     );
-    const mbid: string | undefined =
+    const recordingId: string | undefined =
       acoustid?.results?.[0]?.recordings?.[0]?.id;
+    if (!recordingId) return null;
 
-    if (!mbid) return null;
-
-    const mb = await getJson(
-      `https://musicbrainz.org/ws/2/recording/${mbid}?inc=artists+releases&fmt=json`,
-      { "User-Agent": MB_UA },
+    const rec = await mbGetJson(
+      `https://musicbrainz.org/ws/2/recording/${recordingId}?inc=artists+releases+release-groups+media&fmt=json`,
     );
 
-    const artist =
-      mb?.["artist-credit"]
-        ?.map((ac: { name?: string }) => ac.name ?? "")
-        .join("") || mb?.["artist-credit"]?.[0]?.artist?.name;
+    const release = rec?.releases?.[0];
+    const artist = artistCredit(rec?.["artist-credit"]);
+
+    let genre: string | undefined;
+    const releaseGroupId: string | undefined = release?.["release-group"]?.id;
+    if (releaseGroupId) {
+      const rg = await mbGetJson(
+        `https://musicbrainz.org/ws/2/release-group/${releaseGroupId}?inc=genres&fmt=json`,
+      );
+      genre = rg?.genres?.[0]?.name;
+    }
 
     return {
-      title: mb?.title,
+      title: rec?.title,
       artist,
-      album: mb?.releases?.[0]?.title,
+      album: release?.title,
+      albumArtist: artistCredit(release?.["artist-credit"]) ?? artist,
+      track: findTrack(rec?.title, release),
+      year: parseYear(release?.date),
+      genre,
+      coverUrl: coverUrl(release?.id),
     };
   } catch {
     return null;

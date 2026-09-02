@@ -2,6 +2,7 @@ import ffmpeg from "fluent-ffmpeg";
 import { mkdir, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { TrackMeta } from "./types.js";
+import { metaTags } from "./metadata.js";
 
 export async function transcode(
   src: string,
@@ -24,17 +25,7 @@ export async function transcode(
         .outputOptions("-map_metadata", "0");
 
       if (meta) {
-        const tags: Array<[string, string]> = [
-          ["title", meta.title],
-          ["artist", meta.artist],
-          ["album", meta.album],
-          ["track", meta.track ? String(meta.track) : ""],
-          ["album_artist", meta.albumArtist ?? meta.artist],
-          ["genre", meta.genre ?? ""],
-          ["date", meta.year ? String(meta.year) : ""],
-        ];
-
-        for (const [k, v] of tags) {
+        for (const [k, v] of metaTags(meta)) {
           if (v) cmd.outputOptions("-metadata", `${k}=${v}`);
         }
       }

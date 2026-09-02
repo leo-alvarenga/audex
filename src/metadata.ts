@@ -59,3 +59,58 @@ export async function resolveMetadata(
 
   return meta;
 }
+
+function defined(v: unknown): boolean {
+  if (v == null) return false;
+  if (typeof v === "string") return v.length > 0;
+  if (typeof v === "number") return v > 0;
+  return true;
+}
+
+function pick<T>(a: T | undefined, b: T | undefined): T | undefined {
+  return defined(a) ? a : b;
+}
+
+/**
+ * Full resolution for the tag command: always queries remote (so plan/apply
+ * are complete), preferring remote when overwriting and local otherwise.
+ */
+export async function resolveTagMetadata(
+  file: string,
+  opts: { overwrite: boolean },
+): Promise<TrackMeta> {
+  const local = await extractLocalTags(file);
+  const remote = await lookupByFingerprint(file);
+
+  const primary = opts.overwrite ? remote : local;
+  const fallback = opts.overwrite ? local : remote;
+
+  return {
+    title: pick(primary?.title, fallback?.title) ?? "",
+    artist: pick(primary?.artist, fallback?.artist) ?? "",
+    album: pick(primary?.album, fallback?.album) ?? "",
+    albumArtist: pick(primary?.albumArtist, fallback?.albumArtist),
+    genre: pick(primary?.genre, fallback?.genre),
+    track: pick(primary?.track, fallback?.track) ?? 0,
+    year: pick(primary?.year, fallback?.year),
+    coverUrl: remote?.coverUrl,
+  };
+}
+
+/**
+ * Map metadata (partial ok) to flat ffmpeg `-metadata` tag pairs. Empty or
+ * unknown values become empty strings so callers decide whether to write or clear.
+ */
+export function metaTags(
+  meta: Partial<TrackMeta>,
+): Array<[string, string]> {
+  return [
+    ["title", meta.title ?? ""],
+    ["artist", meta.artist ?? ""],
+    ["album", meta.album ?? ""],
+    ["track", meta.track ? String(meta.track) : ""],
+    ["album_artist", meta.albumArtist ?? meta.artist ?? ""],
+    ["genre", meta.genre ?? ""],
+    ["date", meta.year ? String(meta.year) : ""],
+  ];
+}

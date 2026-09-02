@@ -1,11 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { destPath } from "../dist/convert.js";
 import { transcode } from "../dist/transcode.js";
+import { scanFiles } from "../dist/scan.js";
+import { writeTags, generatePlan, applyPlan } from "../dist/tagger.js";
+import { readFile, writeFile } from "node:fs/promises";
 
 // AI GENERATED FILE. DO NOT EDIT.
 
@@ -123,5 +126,75 @@ test(
     }
   },
 );
+
+test("scanFiles: recursive, case-insensitive, filters by extension", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "audex-"));
+  try {
+    mkdirSync(join(dir, "sub"), { recursive: true });
+    writeFileSync(join(dir, "a.flac"), "x");
+    writeFileSync(join(dir, "sub", "b.FLAC"), "x");
+    writeFileSync(join(dir, "sub", "c.mp3"), "x");
+    writeFileSync(join(dir, "sub", "d.txt"), "x");
+    const got = await scanFiles(dir, [".flac", ".mp3"]);
+    assert.deepEqual(got, [join(dir, "a.flac"), join(dir, "sub", "b.FLAC"), join(dir, "sub", "c.mp3")]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("applyPlan: merge keeps existing, fills gaps", { skip: !e2e }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "audex-"));
+  try {
+    const src = join(dir, "song.flac");
+    execFileSync("ffmpeg", ["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-metadata", "title=Existing", "-c:a", "flac", src, "-y"], { stdio: "ignore" });
+    await generatePlan(dir, { overwrite: false });
+    const planPath = join(dir, "audex-plan.json");
+    const plan = JSON.parse(await readFile(planPath, "utf8"));
+    plan.files["song.flac"].title = "Planned";
+    plan.files["song.flac"].artist = "New Artist";
+    await writeFile(planPath, JSON.stringify(plan));
+    await applyPlan(dir, null, { overwrite: false });
+    const t = tags(src);
+    assert.match(t, /title=Existing/);
+    assert.match(t, /artist=New Artist/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("generatePlan + applyPlan roundtrip (overwrite)", { skip: !e2e }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "audex-"));
+  try {
+    const src = join(dir, "song.flac");
+    execFileSync("ffmpeg", ["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-metadata", "title=Old", "-c:a", "flac", src, "-y"], { stdio: "ignore" });
+    await generatePlan(dir, { overwrite: true });
+    const planPath = join(dir, "audex-plan.json");
+    const plan = JSON.parse(await readFile(planPath, "utf8"));
+    assert.equal(plan.files["song.flac"].title, "Old");
+    plan.files["song.flac"].title = "New";
+    await writeFile(planPath, JSON.stringify(plan));
+    await applyPlan(dir, null, { overwrite: true });
+    assert.match(tags(src), /title=New/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeTags: embeds a local cover image", { skip: !e2e }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "audex-"));
+  try {
+    const src = join(dir, "song.flac");
+    const dest = join(dir, "out.flac");
+    const cover = join(dir, "cover.jpg");
+    execFileSync("ffmpeg", ["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "flac", src, "-y"], { stdio: "ignore" });
+    execFileSync("ffmpeg", ["-f", "lavfi", "-i", "color=red:s=16x16", "-frames:v", "1", cover, "-y"], { stdio: "ignore" });
+    await writeTags(src, dest, { title: "X", coverUrl: cover }, { overwrite: false });
+    const out = execFileSync("ffprobe", ["-v", "error", "-show_streams", dest], { encoding: "utf8" });
+    assert.match(out, /attached_pic=1/);
+    assert.match(out, /codec_type=video/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 console.log("smoke tests passed");
