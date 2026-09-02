@@ -3,13 +3,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { resolve } from "node:path";
 import { scanFiles } from "../scan.js";
-import {
-  AUDIO_EXTS,
-  applyPlan,
-  defaultAction,
-  generatePlan,
-  hasPlan,
-} from "../tagger.js";
+import { AUDIO_EXTS, previewTags, tagFiles } from "../tagger.js";
 import { assertDir } from "../fs.js";
 
 async function confirm(question: string): Promise<boolean> {
@@ -24,13 +18,13 @@ async function confirm(question: string): Promise<boolean> {
 export function tagCommand(): Command {
   return new Command()
     .name("tag")
-    .description("Tag audio files, or generate a reviewable tag plan")
+    .description("Tag audio files")
     .argument("<input>", "input directory to scan for audio files")
     .argument(
       "[output]",
       "output directory for tagged copies (default: edit in place)",
     )
-    .option("--plan", "generate a tag plan file instead of tagging")
+    .option("--plan", "show what would be tagged without writing anything")
     .option(
       "--overwrite",
       "overwrite existing tags (default: merge, existing tags take precedence)",
@@ -52,7 +46,7 @@ export function tagCommand(): Command {
         if (outDir) await assertDir(outDir, "output");
 
         if (opts.plan) {
-          await generatePlan(inputDir, { overwrite: opts.overwrite });
+          await previewTags(inputDir, { overwrite: opts.overwrite });
           return;
         }
 
@@ -74,17 +68,10 @@ export function tagCommand(): Command {
           }
         }
 
-        if (await hasPlan(inputDir)) {
-          await applyPlan(inputDir, outDir, {
-            overwrite: opts.overwrite,
-            includeLyrics: opts.includeLyrics,
-          });
-        } else {
-          await defaultAction(inputDir, outDir, {
-            overwrite: opts.overwrite,
-            includeLyrics: opts.includeLyrics,
-          });
-        }
+        await tagFiles(inputDir, outDir, {
+          overwrite: opts.overwrite,
+          includeLyrics: opts.includeLyrics,
+        });
       },
     );
 }

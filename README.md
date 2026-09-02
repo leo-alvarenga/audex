@@ -9,8 +9,9 @@ That's basically it.
   (256kbps, 44.1kHz, stereo) as `.m4a`, and mirrors the folder structure into
   an output directory. If a file fails to convert, it copies the original
   FLAC instead of losing it.
-- `audex tag`: tags audio files (`.flac`, `.m4a`, `.mp3`) using existing
-  metadata, with an optional review step.
+- `audex tag`: tags audio files (`.flac`, `.m4a`, `.mp3`) using existing and
+  fetched metadata plus album art, with a `--plan` dry-run preview and a
+  final summary of missing cover art, lyrics, and metadata.
 - `audex sync`: mirrors a directory into another (same structure and files),
   copying only what's missing or different, with `--dry-run` and `--force`.
 
@@ -66,18 +67,12 @@ when it's available. `--overwrite` prefers the fetched data over the file's
 existing tags; otherwise existing tags take precedence and remote data only
 fills gaps.
 
-`--plan` generates a reviewable plan file (`audex-plan.json` in the input
-dir) instead of tagging. It includes the resolved tags plus the album-art
-URL (no art is embedded at this stage). Edit it, then run
-`audex tag <input-dir>` again to apply it. Pass `--overwrite` to `--plan` to
-plan the overwrite-flavored tags (fetched data over existing):
+`--plan` shows what would be tagged (resolved metadata and whether a cover
+would be embedded) without writing anything:
 
 ```bash
-# See what the tagger would do, and review/edit it
+# Preview the tags before writing them
 audex tag ~/music/flac --plan
-
-# Apply the (edited) plan to copies
-audex tag ~/music/flac ~/music/dap --overwrite
 ```
 
 `--include-lyrics` (same as convert) also writes `.lrc` files next to each

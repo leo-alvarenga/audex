@@ -20,8 +20,3 @@ export interface TrackMeta {
   albumArtist?: string;
   coverUrl?: string;
 }
-
-export interface TagPlan {
-  version: number;
-  files: Record<string, Partial<TrackMeta>>;
-}

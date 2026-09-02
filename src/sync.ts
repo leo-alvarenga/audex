@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SyncAction, Tree } from "./types.js";
+import { runWithProgress } from "./progress.js";
 
 // Full recursive walk (all files, not just audio). Symlinks are skipped
 async function walk(dir: string): Promise<Tree> {
@@ -133,15 +134,17 @@ export async function runSync(
     if (a.kind === "mkdir") await mkdir(join(dest, a.rel), { recursive: true });
   }
 
-  for (const a of actions) {
-    if (a.kind !== "copy") continue;
+  const copies = actions
+    .filter((a) => a.kind === "copy")
+    .map((a) => a.rel);
 
-    const dst = join(dest, a.rel);
+  await runWithProgress("copying", copies, (rel) => rel, async (rel) => {
+    const dst = join(dest, rel);
     await mkdir(dirname(dst), { recursive: true });
-    await copyFile(join(origin, a.rel), dst);
+    await copyFile(join(origin, rel), dst);
 
     copied++;
-  }
+  });
 
   for (const a of actions) {
     if (a.kind !== "delete") continue;

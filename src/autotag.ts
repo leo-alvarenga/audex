@@ -1,5 +1,8 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { FpcalcResult, TrackMeta } from "./types.js";
 import { MB_UA } from "./constants.js";
 
@@ -34,6 +37,18 @@ async function mbGetJson(url: string): Promise<any> {
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   lastMbAt = Date.now();
   return getJson(url, { "User-Agent": MB_UA });
+}
+
+function acoustidApiKey(): string | undefined {
+  if (process.env.ACOUSTID_API_KEY) return process.env.ACOUSTID_API_KEY;
+  try {
+    const cfg = JSON.parse(
+      readFileSync(join(homedir(), ".config", "audex", "config.json"), "utf8"),
+    ) as { acoustidApiKey?: string };
+    return cfg.acoustidApiKey;
+  } catch {
+    return undefined;
+  }
 }
 
 function artistCredit(credit?: Array<{ name?: string }>): string | undefined {
@@ -77,7 +92,7 @@ function coverUrl(releaseId?: string): string | undefined {
 export async function lookupByFingerprint(
   file: string,
 ): Promise<Partial<TrackMeta> | null> {
-  const key = process.env.ACOUSTID_API_KEY;
+  const key = acoustidApiKey();
   if (!key) return null;
 
   const fp = await runFpcalc(file);
@@ -88,7 +103,7 @@ export async function lookupByFingerprint(
       client: key,
       duration: String(Math.round(fp.duration)),
       fingerprint: fp.fingerprint,
-      meta: "recordings+releasegroups",
+      meta: "recordings releasegroups",
     });
 
     const acoustid = await getJson(

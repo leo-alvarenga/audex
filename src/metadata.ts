@@ -72,9 +72,13 @@ function pick<T>(a: T | undefined, b: T | undefined): T | undefined {
   return defined(a) ? a : b;
 }
 
+export function hasCoreMeta(meta: Partial<TrackMeta>): boolean {
+  return Boolean(meta.title || meta.artist || meta.album);
+}
+
 /**
- * Full resolution for the tag command: always queries remote (so plan/apply
- * are complete), preferring remote when overwriting and local otherwise
+ * Full resolution for the tag command: always queries remote, preferring
+ * remote when overwriting and local otherwise
  */
 export async function resolveTagMetadata(
   file: string,

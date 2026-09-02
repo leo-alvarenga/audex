@@ -2,13 +2,12 @@ import { tmpdir } from "node:os";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { extname, join, relative } from "node:path";
 import { scanFiles } from "./scan.js";
-import { extractLocalTags, resolveTagMetadata } from "./metadata.js";
+import { extractLocalTags, hasCoreMeta, resolveTagMetadata } from "./metadata.js";
 import { writeAudio } from "./ffmpeg.js";
 import { writeLyrics } from "./lyrics.js";
 import { runWithProgress } from "./progress.js";
-import type { TagPlan, TrackMeta } from "./types.js";
+import type { TrackMeta } from "./types.js";
 
-export const PLAN_FILENAME = "audex-plan.json";
 export const AUDIO_EXTS = [".flac", ".m4a", ".mp3"];
 
 const FORMAT_BY_EXT: Record<string, string> = {
@@ -16,19 +15,6 @@ const FORMAT_BY_EXT: Record<string, string> = {
   ".m4a": "ipod",
   ".mp3": "mp3",
 };
-
-export function planPath(inputDir: string): string {
-  return join(inputDir, PLAN_FILENAME);
-}
-
-export async function hasPlan(inputDir: string): Promise<boolean> {
-  try {
-    await readFile(planPath(inputDir));
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function present(v: unknown): boolean {
   if (typeof v === "string") return v.length > 0;
@@ -98,7 +84,7 @@ export async function writeTags(
   dest: string,
   meta: Partial<TrackMeta>,
   opts: { overwrite: boolean },
-): Promise<void> {
+): Promise<boolean> {
   const cover = await resolveCover(meta.coverUrl);
   try {
     await writeAudio(
@@ -120,40 +106,13 @@ export async function writeTags(
   } finally {
     if (cover?.temp) await unlink(cover.path).catch(() => {});
   }
+
+  return cover !== null;
 }
 
-export async function generatePlan(
-  inputDir: string,
-  opts: { overwrite: boolean },
-): Promise<void> {
-  const path = planPath(inputDir);
-  if (await hasPlan(inputDir)) {
-    throw new Error(
-      `plan file already exists: ${path}\nDelete it, then re-run to regenerate.`,
-    );
-  }
-
-  const files = await scanFiles(inputDir, AUDIO_EXTS);
-  const plan: TagPlan = { version: 1, files: {} };
-
-  await runWithProgress(
-    "planning",
-    files,
-    (file) => relative(inputDir, file),
-    async (file) => {
-      const rel = relative(inputDir, file);
-      plan.files[rel] = await resolveTagMetadata(file, opts);
-    },
-  );
-
-  await writeFile(path, JSON.stringify(plan, null, 2) + "\n");
-  console.log(`Wrote plan for ${files.length} file(s): ${path}`);
-}
-
-async function processFiles(
+export async function tagFiles(
   inputDir: string,
   outDir: string | null,
-  resolvePlanned: (file: string) => Promise<Partial<TrackMeta> | null>,
   opts: { overwrite: boolean; includeLyrics: boolean },
 ): Promise<void> {
   const files = await scanFiles(inputDir, AUDIO_EXTS);
@@ -164,7 +123,10 @@ async function processFiles(
   }
 
   let tagged = 0;
+  let complete = 0;
+  let missingCover = 0;
   let missingLyrics = 0;
+  let missingMeta = 0;
 
   await runWithProgress(
     "tagging",
@@ -172,60 +134,70 @@ async function processFiles(
     (file) => relative(inputDir, file),
     async (file) => {
       const rel = relative(inputDir, file);
-      const planned = await resolvePlanned(file);
-
-      if (planned === null) return;
-
+      const planned = await resolveTagMetadata(file, opts);
       const existing = await extractLocalTags(file);
       const final = opts.overwrite ? planned : mergeMeta(existing, planned);
       const dest = outDir ? join(outDir, rel) : file;
 
-      await writeTags(file, dest, final, { overwrite: opts.overwrite });
-      tagged++;
+      const gotCover = await writeTags(file, dest, final, {
+        overwrite: opts.overwrite,
+      });
+      const gotLyrics = opts.includeLyrics
+        ? await writeLyrics(dest, file, final)
+        : true;
+      const gotMeta = hasCoreMeta(final);
 
-      if (opts.includeLyrics && !(await writeLyrics(dest, file, final))) {
-        missingLyrics++;
-      }
+      tagged++;
+      if (!gotCover) missingCover++;
+      if (!gotMeta) missingMeta++;
+      if (!gotLyrics) missingLyrics++;
+      if (gotCover && gotMeta && gotLyrics) complete++;
     },
   );
-
-  if (opts.includeLyrics && missingLyrics > 0) {
-    console.warn(
-      `Warning: could not obtain lyrics for ${missingLyrics} of ${files.length} track(s).`,
-    );
-  }
 
   console.log(
     `Done: ${tagged} file(s) tagged${outDir ? ` into ${outDir}` : " in place"}.`,
   );
+  console.log(`  complete successes: ${complete}`);
+  console.log(`  missing cover art: ${missingCover}`);
+  if (opts.includeLyrics) {
+    console.log(`  missing lyrics: ${missingLyrics}`);
+  }
+  console.log(`  missing metadata: ${missingMeta}`);
 }
 
-export async function applyPlan(
+export async function previewTags(
   inputDir: string,
-  outDir: string | null,
-  opts: { overwrite: boolean; includeLyrics: boolean },
+  opts: { overwrite: boolean },
 ): Promise<void> {
-  const plan = JSON.parse(
-    await readFile(planPath(inputDir), "utf8"),
-  ) as TagPlan;
+  const files = await scanFiles(inputDir, AUDIO_EXTS);
 
-  await processFiles(
-    inputDir,
-    outDir,
-    (file) => Promise.resolve(plan.files[relative(inputDir, file)] ?? null),
-    opts,
-  );
-}
+  if (files.length === 0) {
+    console.log(`No audio files found in ${inputDir}`);
+    return;
+  }
 
-export async function defaultAction(
-  inputDir: string,
-  outDir: string | null,
-  opts: { overwrite: boolean; includeLyrics: boolean },
-): Promise<void> {
-  await processFiles(
-    inputDir,
-    outDir,
-    (file) => resolveTagMetadata(file, opts),
-    opts,
+  const resolved = new Map<string, TrackMeta>();
+
+  await runWithProgress(
+    "previewing",
+    files,
+    (file) => relative(inputDir, file),
+    async (file) => {
+      resolved.set(file, await resolveTagMetadata(file, opts));
+    },
   );
+
+  console.log(`\nWould tag ${files.length} file(s):`);
+  for (const file of files) {
+    const m = resolved.get(file)!;
+    const title = m.title || "(no title)";
+    const artist = m.artist || "(no artist)";
+    const album = m.album || "(no album)";
+    const year = m.year ? ` (${m.year})` : "";
+
+    console.log(`  ${relative(inputDir, file)}`);
+    console.log(`    ${title} — ${artist} — ${album}${year}`);
+    console.log(`    cover: ${m.coverUrl ? "yes" : "no"}`);
+  }
 }
