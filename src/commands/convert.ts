@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { resolve } from "node:path";
 import { convert } from "../convert.js";
 import { assertDir } from "../fs.js";
+import { cliProgressCallback } from "../progress.js";
 
 export function convertCommand(): Command {
   return new Command()
@@ -32,13 +33,46 @@ export function convertCommand(): Command {
         const inputDir = resolve(input);
         const outDir = resolve(output);
 
-        await assertDir(outDir, "output");
+        try {
+          await assertDir(outDir, "output");
 
-        await convert(inputDir, outDir, {
-          autoTag: opts.autoTag,
-          dryRun: opts.dryRun,
-          includeLyrics: opts.includeLyrics,
-        });
+          const result = await convert(
+            inputDir,
+            outDir,
+            {
+              autoTag: opts.autoTag,
+              dryRun: opts.dryRun,
+              includeLyrics: opts.includeLyrics,
+            },
+            cliProgressCallback("converting"),
+          );
+
+          if (result.plan) {
+            console.log(`Would convert ${result.stats.planned} FLAC file(s):`);
+            for (const line of result.plan) console.log(line);
+          } else if (
+            result.stats.converted === 0 &&
+            result.stats.copied === 0 &&
+            result.stats.skipped === 0
+          ) {
+            console.log(`No FLAC files found in ${inputDir}`);
+          } else {
+            if (result.errors.length > 0) {
+              for (const e of result.errors) console.warn(e);
+            }
+            if (result.stats.missingLyrics > 0) {
+              console.warn(
+                `Warning: could not obtain lyrics for ${result.stats.missingLyrics} track(s).`,
+              );
+            }
+            console.log(
+              `\nDone: ${result.stats.converted} converted, ${result.stats.copied} copied (conversion failed), ${result.stats.skipped} skipped (already exist).`,
+            );
+          }
+        } catch (err) {
+          console.error((err as Error).message);
+          process.exit(1);
+        }
       },
     );
 }

@@ -6,7 +6,7 @@ import { extractLocalTags, hasCoreMeta, resolveTagMetadata } from "./metadata.js
 import { writeAudio } from "./ffmpeg.js";
 import { writeLyrics } from "./lyrics.js";
 import { runWithProgress } from "./progress.js";
-import type { TrackMeta } from "./types.js";
+import type { OperationResult, ProgressCallback, TrackMeta } from "./types.js";
 
 export const AUDIO_EXTS = [".flac", ".m4a", ".mp3"];
 
@@ -114,12 +114,22 @@ export async function tagFiles(
   inputDir: string,
   outDir: string | null,
   opts: { overwrite: boolean; includeLyrics: boolean },
-): Promise<void> {
+  onProgress?: ProgressCallback,
+): Promise<OperationResult> {
   const files = await scanFiles(inputDir, AUDIO_EXTS);
 
   if (files.length === 0) {
-    console.log(`No audio files found in ${inputDir}`);
-    return;
+    return {
+      ok: true,
+      stats: {
+        tagged: 0,
+        complete: 0,
+        missingCover: 0,
+        missingMeta: 0,
+        missingLyrics: 0,
+      },
+      errors: [],
+    };
   }
 
   let tagged = 0;
@@ -129,9 +139,7 @@ export async function tagFiles(
   let missingMeta = 0;
 
   await runWithProgress(
-    "tagging",
     files,
-    (file) => relative(inputDir, file),
     async (file) => {
       const rel = relative(inputDir, file);
       const planned = await resolveTagMetadata(file, opts);
@@ -153,42 +161,44 @@ export async function tagFiles(
       if (!gotLyrics) missingLyrics++;
       if (gotCover && gotMeta && gotLyrics) complete++;
     },
+    onProgress,
+    (file) => relative(inputDir, file),
   );
 
-  console.log(
-    `Done: ${tagged} file(s) tagged${outDir ? ` into ${outDir}` : " in place"}.`,
-  );
-  console.log(`  complete successes: ${complete}`);
-  console.log(`  missing cover art: ${missingCover}`);
-  if (opts.includeLyrics) {
-    console.log(`  missing lyrics: ${missingLyrics}`);
-  }
-  console.log(`  missing metadata: ${missingMeta}`);
+  return {
+    ok: true,
+    stats: { tagged, complete, missingCover, missingMeta, missingLyrics },
+    errors: [],
+  };
 }
 
 export async function previewTags(
   inputDir: string,
   opts: { overwrite: boolean },
-): Promise<void> {
+  onProgress?: ProgressCallback,
+): Promise<OperationResult> {
   const files = await scanFiles(inputDir, AUDIO_EXTS);
 
   if (files.length === 0) {
-    console.log(`No audio files found in ${inputDir}`);
-    return;
+    return {
+      ok: true,
+      stats: { planned: 0 },
+      errors: [],
+      plan: ["No audio files found."],
+    };
   }
 
   const resolved = new Map<string, TrackMeta>();
 
   await runWithProgress(
-    "previewing",
     files,
-    (file) => relative(inputDir, file),
     async (file) => {
       resolved.set(file, await resolveTagMetadata(file, opts));
     },
+    onProgress,
+    (file) => relative(inputDir, file),
   );
-
-  console.log(`\nWould tag ${files.length} file(s):`);
+  const plan: string[] = [`Would tag ${files.length} file(s):`];
   for (const file of files) {
     const m = resolved.get(file)!;
     const title = m.title || "(no title)";
@@ -196,8 +206,10 @@ export async function previewTags(
     const album = m.album || "(no album)";
     const year = m.year ? ` (${m.year})` : "";
 
-    console.log(`  ${relative(inputDir, file)}`);
-    console.log(`    ${title} — ${artist} — ${album}${year}`);
-    console.log(`    cover: ${m.coverUrl ? "yes" : "no"}`);
+    plan.push(`  ${relative(inputDir, file)}`);
+    plan.push(`    ${title} — ${artist} — ${album}${year}`);
+    plan.push(`    cover: ${m.coverUrl ? "yes" : "no"}`);
   }
+
+  return { ok: true, stats: { planned: files.length }, errors: [], plan };
 }

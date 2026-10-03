@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { copyFile, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { SyncAction, Tree } from "./types.js";
+import type { OperationResult, ProgressCallback, SyncAction, Tree } from "./types.js";
 import { runWithProgress } from "./progress.js";
 
 // Full recursive walk (all files, not just audio). Symlinks are skipped
@@ -103,26 +103,18 @@ export async function runSync(
   origin: string,
   dest: string,
   opts: { force: boolean; dryRun: boolean },
-): Promise<void> {
+  onProgress?: ProgressCallback,
+): Promise<OperationResult> {
   const actions = await planSync(origin, dest, opts.force);
 
   if (opts.dryRun) {
-    for (const a of actions) {
-      if (a.kind === "mkdir") {
-        console.log(`  MKDIR  ${a.rel}/`);
-        continue;
-      }
+    const plan = actions.map((a) => {
+      if (a.kind === "mkdir") return `  MKDIR  ${a.rel}/`;
+      if (a.kind === "copy") return `  COPY   ${a.rel}`;
+      return `  DELETE ${a.rel}`;
+    });
 
-      if (a.kind === "copy") {
-        console.log(`  COPY   ${a.rel}`);
-        continue;
-      }
-
-      console.log(`  DELETE ${a.rel}`);
-    }
-
-    console.log(`\nWould apply ${actions.length} change(s).`);
-    return;
+    return { ok: true, stats: { planned: actions.length }, errors: [], plan };
   }
 
   await mkdir(dest, { recursive: true });
@@ -134,24 +126,25 @@ export async function runSync(
     if (a.kind === "mkdir") await mkdir(join(dest, a.rel), { recursive: true });
   }
 
-  const copies = actions
-    .filter((a) => a.kind === "copy")
-    .map((a) => a.rel);
+  const execItems = actions.filter((a) => a.kind !== "mkdir");
 
-  await runWithProgress("copying", copies, (rel) => rel, async (rel) => {
-    const dst = join(dest, rel);
-    await mkdir(dirname(dst), { recursive: true });
-    await copyFile(join(origin, rel), dst);
+  await runWithProgress(
+    execItems,
+    async (a) => {
+      if (a.kind === "copy") {
+        const dst = join(dest, a.rel);
+        await mkdir(dirname(dst), { recursive: true });
+        await copyFile(join(origin, a.rel), dst);
+        copied++;
+        return;
+      }
 
-    copied++;
-  });
+      await rm(join(dest, a.rel), { recursive: true, force: true });
+      deleted++;
+    },
+    onProgress,
+    (a) => a.rel,
+  );
 
-  for (const a of actions) {
-    if (a.kind !== "delete") continue;
-
-    await rm(join(dest, a.rel), { recursive: true, force: true });
-    deleted++;
-  }
-
-  console.log(`Done: ${copied} copied, ${deleted} deleted.`);
+  return { ok: true, stats: { copied, deleted }, errors: [] };
 }

@@ -1,36 +1,43 @@
 import { cpus } from "node:os";
 import pLimit from "p-limit";
 import cliProgress from "cli-progress";
+import type { ProgressCallback } from "./types.js";
 
-// Run `fn` over `items` with CPU-bound concurrency and a single progress bar
 export async function runWithProgress<T>(
-  label: string,
   items: T[],
-  format: (item: T) => string,
   fn: (item: T) => Promise<void>,
+  onProgress?: ProgressCallback,
+  format?: (item: T) => string,
 ): Promise<void> {
   if (items.length === 0) return;
 
   const limit = pLimit(cpus().length);
-
-  const bar = new cliProgress.SingleBar(
-    { format: `${label} [{bar}] {percentage}% | {value}/{total} | {file}` },
-    cliProgress.Presets.shades_classic,
-  );
-
-  bar.start(items.length, 0);
+  let done = 0;
+  const total = items.length;
 
   await Promise.all(
     items.map((item) =>
       limit(async () => {
-        try {
-          await fn(item);
-        } finally {
-          bar.increment(1, { file: format(item) });
-        }
+        await fn(item);
+        done++;
+        onProgress?.({ done, total, current: format ? format(item) : "" });
       }),
     ),
   );
+}
 
-  bar.stop();
+export function cliProgressCallback(label: string): ProgressCallback {
+  let bar: cliProgress.SingleBar | null = null;
+
+  return ({ done, total, current }) => {
+    if (!bar) {
+      bar = new cliProgress.SingleBar(
+        { format: `${label} [{bar}] {percentage}% | {value}/{total} | {file}` },
+        cliProgress.Presets.shades_classic,
+      );
+      bar.start(total, 0);
+    }
+    bar.increment(1, { file: current });
+    if (done === total) bar.stop();
+  };
 }

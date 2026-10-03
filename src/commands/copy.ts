@@ -1,16 +1,7 @@
-import { copyFile, mkdir } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { Command } from "commander";
-import { openLibrary, queryTracks } from "../library.js";
-import type { LibraryTrack } from "../library.js";
-import { fileExists } from "../fs.js";
-import { runWithProgress } from "../progress.js";
-
-function relToRoot(t: LibraryTrack): string {
-  if (!t.libraryRoot) return basename(t.path);
-  const rel = relative(t.libraryRoot, t.path);
-  return rel.startsWith("..") || isAbsolute(rel) ? basename(t.path) : rel;
-}
+import { cliProgressCallback } from "../progress.js";
+import { copyTracks } from "../core/copy.js";
 
 export function copyCommand(): Command {
   return new Command()
@@ -21,24 +12,24 @@ export function copyCommand(): Command {
     .option("--library <path>", "filter by library root")
     .option("--force", "overwrite existing files")
     .action(async (output: string, pattern: string, opts: { library?: string; force: boolean }) => {
-      const outDir = resolve(output);
-      const db = openLibrary();
-      const tracks = queryTracks(db, pattern, opts.library ? resolve(opts.library) : undefined);
-      db.close();
+      try {
+        const outDir = resolve(output);
+        const result = await copyTracks(
+          pattern,
+          outDir,
+          { library: opts.library ? resolve(opts.library) : undefined, force: opts.force },
+          cliProgressCallback("copying"),
+        );
 
-      if (!tracks.length) { console.log("No tracks found."); return; }
-
-      await mkdir(outDir, { recursive: true });
-      let copied = 0, skipped = 0, missing = 0;
-
-      await runWithProgress("copying", tracks, (t) => t.path, async (t) => {
-        const dest = join(outDir, relToRoot(t));
-        if (!opts.force && await fileExists(dest)) { skipped++; return; }
-        await mkdir(dirname(dest), { recursive: true });
-        try { await copyFile(t.path, dest); copied++; }
-        catch { missing++; console.warn(`\n[missing] ${t.path}`); }
-      });
-
-      console.log(`\nDone: ${copied} copied, ${skipped} skipped (already exist), ${missing} missing.`);
+        if (result.stats.copied === 0 && result.stats.skipped === 0 && result.errors.length === 0) {
+          console.log("No tracks found.");
+          return;
+        }
+        for (const e of result.errors) console.warn(`\n${e}`);
+        console.log(`\nDone: ${result.stats.copied} copied, ${result.stats.skipped} skipped (already exist), ${result.errors.length} missing.`);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : err);
+        process.exit(1);
+      }
     });
 }

@@ -6,7 +6,7 @@ import { resolveMetadata } from "./metadata.js";
 import { lrcPath, writeLyrics } from "./lyrics.js";
 import { fileExists } from "./fs.js";
 import { runWithProgress } from "./progress.js";
-import type { TrackMeta } from "./types.js";
+import type { OperationResult, ProgressCallback, TrackMeta } from "./types.js";
 
 export function destPath(
   inputDir: string,
@@ -20,34 +20,34 @@ export async function convert(
   inputDir: string,
   outDir: string,
   opts: { autoTag: boolean; dryRun: boolean; includeLyrics: boolean },
-): Promise<void> {
+  onProgress?: ProgressCallback,
+): Promise<OperationResult> {
   const files = await scanFiles(inputDir, [".flac"]);
 
   if (files.length === 0) {
-    console.log(`No FLAC files found in ${inputDir}`);
-    return;
+    return {
+      ok: true,
+      stats: { converted: 0, copied: 0, skipped: 0, missingLyrics: 0 },
+      errors: [],
+    };
   }
 
   if (opts.dryRun) {
-    console.log(`Would convert ${files.length} FLAC file(s):`);
-
-    for (const f of files) {
+    const lines = files.map((f) => {
       const rel = relative(inputDir, f);
-      console.log(`  ${rel} -> ${rel.replace(/\.flac$/i, ".m4a")}`);
-    }
-
-    return;
+      return `  ${rel} -> ${rel.replace(/\.flac$/i, ".m4a")}`;
+    });
+    return { ok: true, stats: { planned: files.length }, errors: [], plan: lines };
   }
 
   let converted = 0;
   let copied = 0;
   let skipped = 0;
   let missingLyrics = 0;
+  const errors: string[] = [];
 
   await runWithProgress(
-    "converting",
     files,
-    (file) => relative(inputDir, file),
     async (file) => {
       const rel = relative(inputDir, file);
       const dest = destPath(inputDir, outDir, file);
@@ -83,20 +83,14 @@ export async function convert(
           missingLyrics++;
         }
 
-        console.warn(
-          `\n[copy] ${rel}: conversion failed (${(err as Error).message}); copied original`,
+        errors.push(
+          `[copy] ${rel}: conversion failed (${(err as Error).message}); copied original`,
         );
       }
     },
+    onProgress,
+    (file) => relative(inputDir, file),
   );
 
-  if (opts.includeLyrics && missingLyrics > 0) {
-    console.warn(
-      `Warning: could not obtain lyrics for ${missingLyrics} of ${files.length} track(s).`,
-    );
-  }
-
-  console.log(
-    `\nDone: ${converted} converted, ${copied} copied (conversion failed), ${skipped} skipped (already exist).`,
-  );
+  return { ok: true, stats: { converted, copied, skipped, missingLyrics }, errors };
 }

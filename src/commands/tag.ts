@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { scanFiles } from "../scan.js";
 import { AUDIO_EXTS, previewTags, tagFiles } from "../tagger.js";
 import { assertDir } from "../fs.js";
+import { cliProgressCallback } from "../progress.js";
 
 async function confirm(question: string): Promise<boolean> {
   const rl = createInterface({ input: stdin, output: stdout });
@@ -39,39 +40,66 @@ export function tagCommand(): Command {
         output: string | undefined,
         opts: { plan: boolean; overwrite: boolean; includeLyrics: boolean },
       ) => {
-        const inputDir = resolve(input);
-        const outDir = output ? resolve(output) : null;
+        try {
+          const inputDir = resolve(input);
+          const outDir = output ? resolve(output) : null;
 
-        await assertDir(inputDir, "input");
-        if (outDir) await assertDir(outDir, "output");
+          await assertDir(inputDir, "input");
+          if (outDir) await assertDir(outDir, "output");
 
-        if (opts.plan) {
-          await previewTags(inputDir, { overwrite: opts.overwrite });
-          return;
-        }
+          if (opts.plan) {
+            const result = await previewTags(
+              inputDir,
+              { overwrite: opts.overwrite },
+              cliProgressCallback("previewing"),
+            );
+            for (const line of result.plan ?? []) console.log(line);
+            return;
+          }
 
-        if (!outDir) {
-          const files = await scanFiles(inputDir, AUDIO_EXTS);
+          if (!outDir) {
+            const files = await scanFiles(inputDir, AUDIO_EXTS);
 
-          if (files.length === 0) {
+            if (files.length === 0) {
+              console.log(`No audio files found in ${inputDir}`);
+              return;
+            }
+
+            const ok = await confirm(
+              `About to edit ${files.length} file(s) in place. Continue? [y/N] `,
+            );
+
+            if (!ok) {
+              console.error("aborted");
+              process.exit(1);
+            }
+          }
+
+          const result = await tagFiles(
+            inputDir,
+            outDir,
+            { overwrite: opts.overwrite, includeLyrics: opts.includeLyrics },
+            cliProgressCallback("tagging"),
+          );
+
+          if (result.stats.tagged === 0) {
             console.log(`No audio files found in ${inputDir}`);
             return;
           }
 
-          const ok = await confirm(
-            `About to edit ${files.length} file(s) in place. Continue? [y/N] `,
+          console.log(
+            `Done: ${result.stats.tagged} file(s) tagged${outDir ? ` into ${outDir}` : " in place"}.`,
           );
-
-          if (!ok) {
-            console.error("aborted");
-            process.exit(1);
+          console.log(`  complete successes: ${result.stats.complete}`);
+          console.log(`  missing cover art: ${result.stats.missingCover}`);
+          if (opts.includeLyrics) {
+            console.log(`  missing lyrics: ${result.stats.missingLyrics}`);
           }
+          console.log(`  missing metadata: ${result.stats.missingMeta}`);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(1);
         }
-
-        await tagFiles(inputDir, outDir, {
-          overwrite: opts.overwrite,
-          includeLyrics: opts.includeLyrics,
-        });
       },
     );
 }

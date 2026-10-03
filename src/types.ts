@@ -20,3 +20,18 @@ export interface TrackMeta {
   albumArtist?: string;
   coverUrl?: string;
 }
+
+export interface OperationResult {
+  ok: boolean;
+  stats: Record<string, number>;
+  errors: string[];
+  plan?: string[];
+}
+
+export interface ProgressEvent {
+  done: number;
+  total: number;
+  current: string;
+}
+
+export type ProgressCallback = (event: ProgressEvent) => void;
