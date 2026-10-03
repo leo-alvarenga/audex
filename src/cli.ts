@@ -3,6 +3,8 @@ import { Command } from "commander";
 import { convertCommand } from "./commands/convert.js";
 import { tagCommand } from "./commands/tag.js";
 import { syncCommand } from "./commands/sync.js";
+import { lyricsCommand } from "./commands/lyrics.js";
+import { libraryCommand } from "./commands/library.js";
 
 const program = new Command();
 
@@ -14,6 +16,8 @@ program
 program.addCommand(convertCommand());
 program.addCommand(tagCommand());
 program.addCommand(syncCommand());
+program.addCommand(lyricsCommand());
+program.addCommand(libraryCommand());
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err instanceof Error ? err.message : err);
