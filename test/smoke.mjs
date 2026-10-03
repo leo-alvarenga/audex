@@ -1,14 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { destPath } from "../dist/convert.js";
+import { convert, destPath } from "../dist/convert.js";
 import { transcode } from "../dist/transcode.js";
 import { scanFiles } from "../dist/scan.js";
 import { writeTags } from "../dist/tagger.js";
 
+
+const CLI = new URL("../dist/cli.js", import.meta.url).pathname;
 const has = (cmd) => {
   try {
     execFileSync(cmd, ["-version"], { stdio: "ignore" });
@@ -151,6 +153,42 @@ test("writeTags: embeds a local cover image", { skip: !e2e }, async () => {
     const out = execFileSync("ffprobe", ["-v", "error", "-show_streams", dest], { encoding: "utf8" });
     assert.match(out, /attached_pic=1/);
     assert.match(out, /codec_type=video/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("convert: skips files that already exist", { skip: !e2e }, async () => {
+  const inDir = mkdtempSync(join(tmpdir(), "audex-"));
+  const outDir = mkdtempSync(join(tmpdir(), "audex-"));
+  try {
+    const src = join(inDir, "song.flac");
+    execFileSync(
+      "ffmpeg",
+      ["-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-c:a", "flac", src, "-y"],
+      { stdio: "ignore" },
+    );
+    await convert(inDir, outDir, { autoTag: false, dryRun: false, includeLyrics: false });
+    const dest = join(outDir, "song.m4a");
+    const mtime1 = statSync(dest).mtimeMs;
+    await convert(inDir, outDir, { autoTag: false, dryRun: false, includeLyrics: false });
+    const mtime2 = statSync(dest).mtimeMs;
+    assert.equal(mtime1, mtime2);
+  } finally {
+    rmSync(inDir, { recursive: true, force: true });
+    rmSync(outDir, { recursive: true, force: true });
+  }
+});
+
+test("lyrics: skips .lrc files that already exist", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "audex-"));
+  try {
+    writeFileSync(join(dir, "song.mp3"), "fake");
+    const lrc = join(dir, "song.lrc");
+    writeFileSync(lrc, "[00:00.00] existing");
+    const out = execFileSync(process.execPath, [CLI, "lyrics", dir], { encoding: "utf8" });
+    assert.match(out, /1 skipped/);
+    assert.equal(readFileSync(lrc, "utf8"), "[00:00.00] existing");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
