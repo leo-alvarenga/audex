@@ -5,6 +5,7 @@ import { tagCommand } from "./commands/tag.js";
 import { syncCommand } from "./commands/sync.js";
 import { lyricsCommand } from "./commands/lyrics.js";
 import { libraryCommand } from "./commands/library.js";
+import { webCommand } from "./commands/web.js";
 
 const program = new Command();
 
@@ -18,6 +19,7 @@ program.addCommand(tagCommand());
 program.addCommand(syncCommand());
 program.addCommand(lyricsCommand());
 program.addCommand(libraryCommand());
+program.addCommand(webCommand());
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(err instanceof Error ? err.message : err);
