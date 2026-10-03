@@ -3,7 +3,8 @@ import { dirname, join, relative } from "node:path";
 import { scanFiles } from "./scan.js";
 import { transcode } from "./transcode.js";
 import { resolveMetadata } from "./metadata.js";
-import { writeLyrics } from "./lyrics.js";
+import { lrcPath, writeLyrics } from "./lyrics.js";
+import { fileExists } from "./fs.js";
 import { runWithProgress } from "./progress.js";
 import type { TrackMeta } from "./types.js";
 
@@ -40,6 +41,7 @@ export async function convert(
 
   let converted = 0;
   let copied = 0;
+  let skipped = 0;
   let missingLyrics = 0;
 
   await runWithProgress(
@@ -48,6 +50,15 @@ export async function convert(
     (file) => relative(inputDir, file),
     async (file) => {
       const rel = relative(inputDir, file);
+      const dest = destPath(inputDir, outDir, file);
+
+      if (await fileExists(dest)) {
+        if (!opts.includeLyrics || await fileExists(lrcPath(dest))) { skipped++; return; }
+        const meta = opts.autoTag ? await resolveMetadata(file, { autoTag: true }) : undefined;
+        if (!(await writeLyrics(dest, file, meta))) missingLyrics++;
+        return;
+      }
+
       let meta: TrackMeta | undefined;
 
       try {
@@ -55,7 +66,6 @@ export async function convert(
           ? await resolveMetadata(file, { autoTag: true })
           : undefined;
 
-        const dest = destPath(inputDir, outDir, file);
         await transcode(file, dest, meta);
         converted++;
 
@@ -87,6 +97,6 @@ export async function convert(
   }
 
   console.log(
-    `\nDone: ${converted} converted, ${copied} copied (conversion failed).`,
+    `\nDone: ${converted} converted, ${copied} copied (conversion failed), ${skipped} skipped (already exist).`,
   );
 }
