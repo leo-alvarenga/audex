@@ -1,6 +1,6 @@
 {
   "name": "audex",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Automated lossless audio transcoding and library organization",
   "type": "module",
   "bin": {
@@ -9,10 +9,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js",
-    "test": "node test/smoke.mjs && node test/sync.mjs"
+    "test": "node test/smoke.mjs && node test/sync.mjs && node test/library.mjs"
   },
   "license": "MIT",
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
     "cli-progress": "^3.12.0",
     "commander": "^15.0.0",
     "fluent-ffmpeg": "^2.1.3",
@@ -20,6 +21,7 @@
     "p-limit": "^7.3.1"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
     "@types/cli-progress": "^3.11.6",
     "@types/fluent-ffmpeg": "^2.1.28",
     "@types/node": "^24.13.3",
