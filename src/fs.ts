@@ -13,3 +13,7 @@ export async function assertDir(path: string, label: string): Promise<void> {
     process.exit(1);
   }
 }
+
+export async function fileExists(path: string): Promise<boolean> {
+  return Boolean(await stat(path).catch(() => null));
+}

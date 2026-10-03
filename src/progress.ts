@@ -3,11 +3,11 @@ import pLimit from "p-limit";
 import cliProgress from "cli-progress";
 
 // Run `fn` over `items` with CPU-bound concurrency and a single progress bar
-export async function runWithProgress(
+export async function runWithProgress<T>(
   label: string,
-  items: string[],
-  format: (item: string) => string,
-  fn: (item: string) => Promise<void>,
+  items: T[],
+  format: (item: T) => string,
+  fn: (item: T) => Promise<void>,
 ): Promise<void> {
   if (items.length === 0) return;
 
