@@ -1,96 +1,83 @@
-# audex
+# Audex
 
-Converts FLAC files to AAC `.m4a` so they fit on my DAP, and tags audio files.
-That's basically it.
+A command-line tool (and optional web UI) for transcoding lossless audio and keeping your library organized. It converts FLAC files to AAC, fetches metadata from MusicBrainz, embeds cover art, grabs synced lyrics, and can sort everything into a tidy `Artist/Album/Track` folder layout.
 
 ## What it does
 
-- `audex convert`: scans a folder for `.flac` files, transcodes each to AAC
-  (256kbps, 44.1kHz, stereo) as `.m4a`, and mirrors the folder structure into
-  an output directory. If a file fails to convert, it copies the original
-  FLAC instead of losing it.
-- `audex tag`: tags audio files (`.flac`, `.m4a`, `.mp3`) using existing and
-  fetched metadata plus album art, with a `--plan` dry-run preview and a
-  final summary of missing cover art, lyrics, and metadata.
-- `audex sync`: mirrors a directory into another (same structure and files),
-  copying only what's missing or different, with `--dry-run` and `--force`.
+- **Convert** FLAC files to M4A (AAC 256kbps) while mirroring your folder structure. If a file can't be transcoded, Audex copies the original FLAC so nothing gets lost.
+- **Tag** audio files (FLAC, M4A, MP3) by querying MusicBrainz and AcoustID, embedding cover art when available. Supports a dry-run preview (`--plan`) before touching anything.
+- **Fetch lyrics** and write timestamped `.lrc` files next to your audio.
+- **Sync** one directory into another, copying only what's missing or changed.
+- **Index** your library into a local SQLite database, then query, copy, or organize tracks from it.
+- **Web UI** — a browser interface that drives all of the above without the terminal, with live progress streaming.
 
 ## Requirements
 
-- [ffmpeg](https://ffmpeg.org/) on your PATH
-- Node.js 18+
+- **Node.js** 18 or later
+- **pnpm** (`npm i -g pnpm`)
+- **ffmpeg** on your `PATH` (used by the converter and AcoustID fingerprinting)
 
-## Install & build
-
-```bash
-npm install
-npm run build
-
-alias audex="node $(pwd)/dist/cli.js" # or whatever way you want to run it
-```
-
-## Usage
-
-### convert
+## Install and build
 
 ```bash
-audex convert <input-dir> <output-dir> [--dry-run] [--auto-tag] [--include-lyrics]
+git clone <repo-url> audex
+cd audex
+pnpm install
+pnpm build          # compiles TypeScript → dist/
 ```
 
-The output dir must already exist.
+To also build the web UI:
 
 ```bash
-# Convert everything
-audex convert ~/music/flac ~/music/dap
-
-# Preview what would happen without writing anything
-audex convert ~/music/flac ~/music/dap --dry-run
+pnpm build:web      # builds web/ → web/dist/
 ```
 
-`--auto-tag` tries to fetch missing metadata from MusicBrainz/AcoustID. It's
-flaky; treat it as a bonus, not a guarantee.
-
-`--include-lyrics` fetches timestamped lyrics from LRCLIB and writes a
-`.lrc` file next to each output file (name matches the audio file). Tracks
-without available lyrics are skipped and counted in a warning at the end.
-### tag
+After building, link the CLI globally so you can run `audex` from anywhere:
 
 ```bash
-audex tag <input-dir> [output-dir] [--plan] [--overwrite] [--include-lyrics]
+npm link
 ```
 
-Without an output dir, files are edited in place (you'll be asked to confirm).
-With an output dir, tagged copies are written there, mirroring the structure.
-
-The default action always queries MusicBrainz/AcoustID and embeds album art
-when it's available. `--overwrite` prefers the fetched data over the file's
-existing tags; otherwise existing tags take precedence and remote data only
-fills gaps.
-
-`--plan` shows what would be tagged (resolved metadata and whether a cover
-would be embedded) without writing anything:
+Or run it without linking:
 
 ```bash
-# Preview the tags before writing them
-audex tag ~/music/flac --plan
+node dist/cli.js <command>
 ```
 
-`--include-lyrics` (same as convert) also writes `.lrc` files next to each
-tagged file.
-
-### sync
+## Quick start
 
 ```bash
-audex sync <origin> <dest> [--dry-run] [--force]
+# Transcode a folder of FLACs to M4A
+audex convert ~/music/flac ~/music/aac
+
+# Tag the resulting files (dry-run first)
+audex tag ~/music/aac --plan
+audex tag ~/music/aac
+
+# Index the library and organize it
+audex library index ~/music/aac
+audex library organize ~/music/aac ~/music/organized
+
+# Start the web UI
+audex web --open
 ```
 
-Mirrors `<origin>` into `<dest>`: creates missing directories, copies missing
-or changed files (compared by size, then SHA-256). `--force` also deletes files
-and directories in `<dest>` that are not in `<origin>`. `--dry-run` prints what
-would change without writing anything.
+## Documentation
 
-## Heads up
+| Doc | What's in it |
+|-----|-------------|
+| [CLI reference](docs/cli.md) | Every command, flag, and example |
+| [Library system](docs/library.md) | How indexing, querying, organizing, and copying work |
+| [Web UI and API](docs/web.md) | The browser interface and the HTTP API it uses |
 
-This is a proof of concept. I wrote it to scratch my own itch while getting
-into the hobby, and it won't get much attention or polish. It works for my
-library, on my machine. YMMV.
+## Running tests
+
+```bash
+pnpm test
+```
+
+Three smoke test scripts live in `test/`: general operations, sync behavior, and library operations.
+
+## License
+
+MIT
